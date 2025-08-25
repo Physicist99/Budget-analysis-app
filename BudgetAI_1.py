@@ -140,17 +140,6 @@ st.markdown("""
         color: #475569;
         margin: 1rem 0;
     }
-    
-    /* Debug box styling */
-    .debug-box {
-        background: #fef3c7;
-        border: 1px solid #f59e0b;
-        padding: 1rem;
-        border-radius: 8px;
-        margin: 1rem 0;
-        font-family: monospace;
-        font-size: 0.9rem;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -377,30 +366,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Debug information for troubleshooting
-if len(df_f) == 0:
-    st.markdown("""
-    <div class="debug-box">
-        <strong>🔍 Debug Information:</strong><br>
-        • Total records in dataset: {}<br>
-        • Departments selected: {}<br>
-        • Categories selected: {}<br>
-        • Date range: {} to {}<br>
-        • Selected years: {}<br>
-        • Available departments: {}<br>
-        • Available categories: {}
-    </div>
-    """.format(
-        len(df),
-        len(dept_sel),
-        len(cat_sel), 
-        date_range[0].strftime("%Y-%m"),
-        date_range[1].strftime("%Y-%m"),
-        selected_years,
-        list(sorted(df["Department"].unique())),
-        list(sorted(df["Category"].unique()))
-    ), unsafe_allow_html=True)
-
 # Enhanced KPI Display
 if len(df_f) == 0:
     st.markdown("""
@@ -533,457 +498,456 @@ else:
             height=300
         )
 
-    # === Enhanced Charts with Multiple Visualization Options ===
+    # === Executive Dashboard Charts ===
     st.markdown("---")
     st.subheader("📈 Visual Analytics")
-    
-    # Debug data availability
-    st.markdown(f"""
-    <div class="debug-box">
-        <strong>📊 Chart Debug Info:</strong><br>
-        • Filtered data shape: {df_f.shape}<br>
-        • Chart type selected: {chart_type}<br>
-        • Data columns: {list(df_f.columns)}<br>
-        • Sample data preview: {len(df_f)} rows available
-    </div>
-    """, unsafe_allow_html=True)
     
     tab1, tab2, tab3 = st.tabs(["📊 Monthly Trends", "🏢 By Department", "📁 By Category"])
 
     with tab1:
-        st.write("**🔍 Monthly Trends Analysis**")
+        monthly_actuals = df_f.groupby("Month", as_index=False)[["Actual_Spent", "Budget_Allocated"]].sum()
         
-        try:
-            monthly_actuals = df_f.groupby("Month", as_index=False)[["Actual_Spent", "Budget_Allocated"]].sum()
+        if monthly_actuals.empty:
+            st.warning("No monthly data to display.")
+        else:
+            # Calculate variance for analysis
+            monthly_actuals["Variance"] = monthly_actuals["Actual_Spent"] - monthly_actuals["Budget_Allocated"]
+            monthly_actuals["Variance_Percent"] = (monthly_actuals["Variance"] / monthly_actuals["Budget_Allocated"] * 100).round(1)
             
-            # Debug monthly data
-            st.write(f"Monthly aggregation result: {monthly_actuals.shape}")
-            if not monthly_actuals.empty:
-                st.write("Sample monthly data:")
-                st.dataframe(monthly_actuals.head(), use_container_width=True)
+            # 1. BIG PICTURE: Line Chart with Dual Series
+            st.subheader("📈 Long-term Trend Analysis")
+            line_chart = (
+                alt.Chart(monthly_actuals)
+                .transform_fold(["Actual_Spent", "Budget_Allocated"], as_=["Type", "Amount"])
+                .mark_line(point=True, strokeWidth=4)
+                .encode(
+                    x=alt.X("Month:T", title="Month", axis=alt.Axis(format="%b %Y")),
+                    y=alt.Y("Amount:Q", title="Amount ($)", axis=alt.Axis(format="$,.0f")),
+                    color=alt.Color("Type:N", 
+                                  scale=alt.Scale(domain=["Budget_Allocated", "Actual_Spent"], 
+                                                range=["#3b82f6", "#ef4444"]),
+                                  legend=alt.Legend(title="Trend Lines", orient="top")),
+                    tooltip=[
+                        alt.Tooltip("Month:T", format="%B %Y"),
+                        alt.Tooltip("Type:N", title="Series"), 
+                        alt.Tooltip("Amount:Q", format="$,.0f")
+                    ]
+                )
+                .properties(height=350, title="Budget vs Actual - Strategic Overview")
+            )
+            st.altair_chart(line_chart, use_container_width=True)
             
-            if monthly_actuals.empty:
-                st.warning("No monthly data to display.")
-            else:
-                # Create simple bar chart as fallback
-                st.write("**Monthly Budget vs Actual (Bar Chart)**")
-                monthly_chart = (
-                    alt.Chart(monthly_actuals)
-                    .transform_fold(["Actual_Spent", "Budget_Allocated"], as_=["Type", "Amount"])
-                    .mark_bar(size=20)
-                    .encode(
-                        x=alt.X("Month:T", title="Month"),
-                        y=alt.Y("Amount:Q", title="Amount ($)"),
-                        color=alt.Color("Type:N", 
-                                      scale=alt.Scale(range=["#ef4444", "#3b82f6"])),
-                        tooltip=["Month:T", "Type:N", "Amount:Q"]
-                    )
-                    .properties(height=400, width=600)
+            # 2. DETAILED VIEW: Clustered Column Chart for Month-to-Month Accountability  
+            st.subheader("📊 Monthly Accountability - Clustered Comparison")
+            monthly_melt = monthly_actuals.melt("Month", value_vars=["Budget_Allocated", "Actual_Spent"], 
+                                              var_name="Type", value_name="Amount")
+            
+            clustered_chart = (
+                alt.Chart(monthly_melt)
+                .mark_bar(size=12)
+                .encode(
+                    x=alt.X("Month:T", title="Month", axis=alt.Axis(format="%b %Y")),
+                    y=alt.Y("Amount:Q", title="Amount ($)", axis=alt.Axis(format="$,.0f")),
+                    color=alt.Color("Type:N", 
+                                  scale=alt.Scale(domain=["Budget_Allocated", "Actual_Spent"], 
+                                                range=["#3b82f6", "#ef4444"]),
+                                  legend=alt.Legend(title="Comparison", orient="top")),
+                    xOffset="Type:N",
+                    tooltip=[
+                        alt.Tooltip("Month:T", format="%B %Y"),
+                        "Type:N",
+                        alt.Tooltip("Amount:Q", format="$,.0f")
+                    ]
                 )
-                st.altair_chart(monthly_chart, use_container_width=True)
-                
-                # Also show as line chart
-                st.write("**Monthly Trend Lines**")
-                line_chart = (
-                    alt.Chart(monthly_actuals)
-                    .transform_fold(["Actual_Spent", "Budget_Allocated"], as_=["Type", "Amount"])
-                    .mark_line(point=True, strokeWidth=3)
-                    .encode(
-                        x=alt.X("Month:T", title="Month"),
-                        y=alt.Y("Amount:Q", title="Amount ($)"),
-                        color=alt.Color("Type:N", 
-                                      scale=alt.Scale(range=["#ef4444", "#3b82f6"])),
-                        tooltip=["Month:T", "Type:N", "Amount:Q"]
-                    )
-                    .properties(height=400)
+                .properties(height=400, title="Side-by-Side Monthly Performance")
+            )
+            st.altair_chart(clustered_chart, use_container_width=True)
+            
+            # 3. COMBINATION CHART: Budget Line + Actual Bars
+            st.subheader("🎯 Combination View - Budget Target vs Actual Performance")
+            
+            # Budget line
+            budget_line = (
+                alt.Chart(monthly_actuals)
+                .mark_line(point=True, strokeWidth=3, color="#3b82f6")
+                .encode(
+                    x=alt.X("Month:T", title="Month"),
+                    y=alt.Y("Budget_Allocated:Q", title="Amount ($)"),
+                    tooltip=[
+                        alt.Tooltip("Month:T", format="%B %Y"),
+                        alt.Tooltip("Budget_Allocated:Q", format="$,.0f", title="Budget Target")
+                    ]
                 )
-                st.altair_chart(line_chart, use_container_width=True)
+            )
+            
+            # Actual bars
+            actual_bars = (
+                alt.Chart(monthly_actuals)
+                .mark_bar(opacity=0.7, color="#ef4444")
+                .encode(
+                    x=alt.X("Month:T"),
+                    y=alt.Y("Actual_Spent:Q"),
+                    tooltip=[
+                        alt.Tooltip("Month:T", format="%B %Y"),
+                        alt.Tooltip("Actual_Spent:Q", format="$,.0f", title="Actual Spent")
+                    ]
+                )
+            )
+            
+            combination_chart = (budget_line + actual_bars).resolve_scale(y="shared").properties(
+                height=400, title="Budget Targets (Line) vs Actual Performance (Bars)"
+            )
+            st.altair_chart(combination_chart, use_container_width=True)
+            
+            # 4. VARIANCE CHART: Quick Diagnostic View for Leadership
+            st.subheader("⚡ Executive Summary - Variance Analysis")
+            
+            variance_chart = (
+                alt.Chart(monthly_actuals)
+                .mark_bar(size=25)
+                .encode(
+                    x=alt.X("Month:T", title="Month", axis=alt.Axis(format="%b %Y")),
+                    y=alt.Y("Variance:Q", title="Variance ($)", scale=alt.Scale(zero=False)),
+                    color=alt.condition(
+                        alt.datum.Variance > 0,
+                        alt.value("#ef4444"),  # Red for over budget
+                        alt.value("#10b981")   # Green for under budget
+                    ),
+                    tooltip=[
+                        alt.Tooltip("Month:T", format="%B %Y"),
+                        alt.Tooltip("Variance:Q", format="$+,.0f", title="Budget Variance"),
+                        alt.Tooltip("Variance_Percent:Q", format="+.1f", title="Variance %")
+                    ]
+                )
+                .properties(height=300, title="Monthly Budget Variance - Quick Diagnostic (Red = Over Budget)")
+            )
+            st.altair_chart(variance_chart, use_container_width=True)
+            
+            # Executive Summary Cards
+            col1, col2, col3, col4 = st.columns(4)
+            avg_budget = monthly_actuals["Budget_Allocated"].mean()
+            avg_actual = monthly_actuals["Actual_Spent"].mean()
+            avg_variance = monthly_actuals["Variance"].mean()
+            months_over = len(monthly_actuals[monthly_actuals["Variance"] > 0])
+            
+            with col1:
+                st.metric("📊 Avg Monthly Budget", f"${avg_budget:,.0f}")
+            with col2:
+                st.metric("💳 Avg Monthly Actual", f"${avg_actual:,.0f}")
+            with col3:
+                st.metric("📈 Avg Variance", f"${avg_variance:+,.0f}")
+            with col4:
+                st.metric("🔴 Months Over Budget", f"{months_over}/{len(monthly_actuals)}")
+            
+            # Add forecast if available
+            if show_forecast and f_f is not None and not f_f.empty:
+                st.markdown("---")
+                st.subheader("🔮 2025 Forecast Trend")
+                monthly_fc = f_f.groupby("Month", as_index=False)["Predicted_Spent"].sum()
                 
-                if show_forecast and f_f is not None and not f_f.empty:
-                    monthly_fc = f_f.groupby("Month", as_index=False)["Predicted_Spent"].sum()
-                    st.write("**2025 Forecast**")
-                    st.dataframe(monthly_fc, use_container_width=True)
-                    
-                    fc_chart = (
-                        alt.Chart(monthly_fc)
-                        .mark_line(point=True, strokeWidth=3, strokeDash=[5, 5])
-                        .encode(
-                            x=alt.X("Month:T", title="Month"),
-                            y=alt.Y("Predicted_Spent:Q", title="Predicted Spent ($)"),
-                            color=alt.value("#10b981"),
-                            tooltip=["Month:T", "Predicted_Spent:Q"]
-                        )
-                        .properties(height=300)
+                fc_chart = (
+                    alt.Chart(monthly_fc)
+                    .mark_line(point=True, strokeWidth=3, strokeDash=[8, 4])
+                    .encode(
+                        x=alt.X("Month:T", title="2025 Forecast Period"),
+                        y=alt.Y("Predicted_Spent:Q", title="Predicted Spending ($)"),
+                        color=alt.value("#10b981"),
+                        tooltip=[
+                            alt.Tooltip("Month:T", format="%B %Y"),
+                            alt.Tooltip("Predicted_Spent:Q", format="$,.0f", title="Forecast")
+                        ]
                     )
-                    st.altair_chart(fc_chart, use_container_width=True)
-                    
-        except Exception as e:
-            st.error(f"Error creating monthly charts: {e}")
-            st.write("Raw data for debugging:")
-            st.dataframe(df_f[["Month", "Actual_Spent", "Budget_Allocated"]].head(10))
+                    .properties(height=300, title="2025 Monthly Forecast Projection")
+                )
+                st.altair_chart(fc_chart, use_container_width=True)
 
     with tab2:
-        st.write("**🏢 Department Analysis**")
+        by_dept = df_f.groupby("Department", as_index=False)[["Actual_Spent", "Budget_Allocated"]].sum()
         
-        try:
-            by_dept = df_f.groupby("Department", as_index=False)[["Actual_Spent", "Budget_Allocated"]].sum()
-            
-            # Debug department data
-            st.write(f"Department aggregation result: {by_dept.shape}")
-            if not by_dept.empty:
-                st.write("Department totals:")
-                st.dataframe(by_dept, use_container_width=True)
-            
-            if by_dept.empty:
-                st.markdown("""
-                <div class="debug-box">
-                    <strong>⚠️ Department Tab Debug:</strong><br>
-                    • Filtered data shape: {}<br>
-                    • Departments in filtered data: {}<br>
-                    • Selected departments: {}
-                </div>
-                """.format(
-                    df_f.shape,
-                    list(df_f["Department"].unique()) if not df_f.empty else "None",
-                    dept_sel
-                ), unsafe_allow_html=True)
-                st.warning("No department data to display. Check your filters!")
-            else:
-                # Simple bar chart that should always work
-                if chart_type == "Stacked Bars":
-                    st.write("**Stacked Bar Chart - Budget + Actual**")
-                    by_dept_melt = by_dept.melt("Department", var_name="Type", value_name="Amount")
-                    st.write("Melted data for stacked chart:")
-                    st.dataframe(by_dept_melt.head(10))
+        if by_dept.empty:
+            st.warning("No department data to display. Please adjust your filters.")
+        else:
+            if chart_type == "Side-by-Side Bars":
+                st.subheader("Department Budget vs Actual - Side-by-Side Comparison")
+                by_dept_melt = by_dept.melt("Department", var_name="Type", value_name="Amount")
+                
+                dept_chart = (
+                    alt.Chart(by_dept_melt)
+                    .mark_bar(size=25)
+                    .encode(
+                        x=alt.X("Department:N", axis=alt.Axis(labelAngle=-45), sort="-y"),
+                        y=alt.Y("Amount:Q", title="Amount ($)"),
+                        color=alt.Color("Type:N", 
+                                      scale=alt.Scale(domain=["Budget_Allocated", "Actual_Spent"], 
+                                                    range=["#3b82f6", "#ef4444"]),
+                                      legend=alt.Legend(title="Type", orient="top")),
+                        xOffset="Type:N",
+                        tooltip=["Department", "Type", "Amount:Q"]
+                    )
+                    .properties(height=450, title="Department Performance Analysis")
+                )
+                st.altair_chart(dept_chart, use_container_width=True)
+                
+            elif chart_type == "Overlapping Bars":
+                st.subheader("Department Budget vs Actual - Overlapping View")
+                
+                # Budget bars (background)
+                budget_bars = (
+                    alt.Chart(by_dept)
+                    .mark_bar(size=40, opacity=0.6)
+                    .encode(
+                        x=alt.X("Department:N", axis=alt.Axis(labelAngle=-45), sort="-y"),
+                        y=alt.Y("Budget_Allocated:Q", title="Amount ($)"),
+                        color=alt.value("#3b82f6"),
+                        tooltip=["Department", alt.Tooltip("Budget_Allocated:Q", format="$,.0f", title="Budget")]
+                    )
+                )
+                
+                # Actual bars (foreground)
+                actual_bars = (
+                    alt.Chart(by_dept)
+                    .mark_bar(size=25, opacity=0.9)
+                    .encode(
+                        x=alt.X("Department:N", sort="-y"),
+                        y=alt.Y("Actual_Spent:Q"),
+                        color=alt.value("#ef4444"),
+                        tooltip=["Department", alt.Tooltip("Actual_Spent:Q", format="$,.0f", title="Actual")]
+                    )
+                )
+                
+                overlapping_chart = (budget_bars + actual_bars).resolve_scale(y="shared").properties(
+                    height=450, title="Overlapping Budget vs Actual Analysis"
+                )
+                st.altair_chart(overlapping_chart, use_container_width=True)
+                
+                st.info("💡 **Chart Guide:** Blue bars = Budget, Red bars = Actual. When red exceeds blue, department is over budget.")
+                
+            elif chart_type == "Variance Focus":
+                st.subheader("Department Performance - Variance Analysis")
+                
+                by_dept["Variance"] = by_dept["Actual_Spent"] - by_dept["Budget_Allocated"]
+                by_dept["Variance_Percent"] = (by_dept["Variance"] / by_dept["Budget_Allocated"] * 100).round(1)
+                
+                # Variance bar chart
+                variance_chart = (
+                    alt.Chart(by_dept)
+                    .mark_bar(size=30)
+                    .encode(
+                        x=alt.X("Department:N", axis=alt.Axis(labelAngle=-45), sort="y"),
+                        y=alt.Y("Variance:Q", title="Variance ($)", scale=alt.Scale(zero=False)),
+                        color=alt.condition(
+                            alt.datum.Variance > 0,
+                            alt.value("#ef4444"),  # Red for over budget
+                            alt.value("#10b981")   # Green for under budget
+                        ),
+                        tooltip=[
+                            "Department", 
+                            alt.Tooltip("Variance:Q", format="$+,.0f"),
+                            alt.Tooltip("Variance_Percent:Q", format="+.1f", title="Variance %")
+                        ]
+                    )
+                    .properties(height=400, title="Department Budget Variance Analysis")
+                )
+                st.altair_chart(variance_chart, use_container_width=True)
+                
+                # Performance tables
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**🟢 Best Performers (Under Budget)**")
+                    best = by_dept.nsmallest(5, "Variance")[["Department", "Variance", "Variance_Percent"]]
+                    best["Variance"] = best["Variance"].apply(lambda x: f"${x:,.0f}")
+                    best["Variance_Percent"] = best["Variance_Percent"].apply(lambda x: f"{x:+.1f}%")
+                    st.dataframe(best, use_container_width=True)
+                with col2:
+                    st.write("**🔴 Needs Attention (Over Budget)**")
+                    worst = by_dept.nlargest(5, "Variance")[["Department", "Variance", "Variance_Percent"]]
+                    worst["Variance"] = worst["Variance"].apply(lambda x: f"${x:,.0f}")
+                    worst["Variance_Percent"] = worst["Variance_Percent"].apply(lambda x: f"{x:+.1f}%")
+                    st.dataframe(worst, use_container_width=True)
                     
-                    try:
-                        dept_chart = (
-                            alt.Chart(by_dept_melt)
-                            .mark_bar()
-                            .encode(
-                                x=alt.X("Department:N", axis=alt.Axis(labelAngle=-45)),
-                                y=alt.Y("Amount:Q", stack="zero"),
-                                color=alt.Color("Type:N", scale=alt.Scale(range=["#3b82f6", "#ef4444"])),
-                                tooltip=["Department", "Type", "Amount:Q"]
-                            )
-                            .properties(height=400)
+            else:  # Pie Charts
+                st.subheader("Department Budget Distribution")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**Budget Allocation**")
+                    budget_pie = (
+                        alt.Chart(by_dept)
+                        .mark_arc(innerRadius=40, outerRadius=120)
+                        .encode(
+                            theta="Budget_Allocated:Q",
+                            color=alt.Color("Department:N", scale=alt.Scale(scheme="category20")),
+                            tooltip=["Department", alt.Tooltip("Budget_Allocated:Q", format="$,.0f")]
                         )
-                        st.altair_chart(dept_chart, use_container_width=True)
-                    except Exception as chart_error:
-                        st.error(f"Chart error: {chart_error}")
-                        # Fallback to simple Streamlit chart
-                        st.bar_chart(by_dept.set_index("Department")[["Budget_Allocated", "Actual_Spent"]])
-                        
-                elif chart_type == "Grouped Bars":
-                    st.write("**Grouped Bar Chart - Side by Side**")
-                    by_dept_melt = by_dept.melt("Department", var_name="Type", value_name="Amount")
-                    
-                    try:
-                        dept_chart = (
-                            alt.Chart(by_dept_melt)
-                            .mark_bar()
-                            .encode(
-                                x=alt.X("Department:N", axis=alt.Axis(labelAngle=-45)),
-                                y=alt.Y("Amount:Q"),
-                                color=alt.Color("Type:N", scale=alt.Scale(range=["#ef4444", "#3b82f6"])),
-                                xOffset="Type:N",
-                                tooltip=["Department", "Type", "Amount:Q"]
-                            )
-                            .properties(height=400)
+                        .properties(height=350)
+                    )
+                    st.altair_chart(budget_pie, use_container_width=True)
+                
+                with col2:
+                    st.write("**Actual Spending**")
+                    actual_pie = (
+                        alt.Chart(by_dept)
+                        .mark_arc(innerRadius=40, outerRadius=120)
+                        .encode(
+                            theta="Actual_Spent:Q",
+                            color=alt.Color("Department:N", scale=alt.Scale(scheme="category20")),
+                            tooltip=["Department", alt.Tooltip("Actual_Spent:Q", format="$,.0f")]
                         )
-                        st.altair_chart(dept_chart, use_container_width=True)
-                    except Exception as chart_error:
-                        st.error(f"Chart error: {chart_error}")
-                        # Fallback to simple Streamlit chart
-                        st.bar_chart(by_dept.set_index("Department")[["Budget_Allocated", "Actual_Spent"]])
-                        
-                else:  # Pie Charts
-                    st.write("**Pie Charts - Budget vs Actual Distribution**")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.write("Budget Allocation")
-                        try:
-                            budget_pie = (
-                                alt.Chart(by_dept)
-                                .mark_arc(innerRadius=30)
-                                .encode(
-                                    theta="Budget_Allocated:Q",
-                                    color=alt.Color("Department:N", scale=alt.Scale(scheme="category20")),
-                                    tooltip=["Department", "Budget_Allocated:Q"]
-                                )
-                                .properties(height=300)
-                            )
-                            st.altair_chart(budget_pie, use_container_width=True)
-                        except:
-                            # Fallback
-                            st.write("Budget by Department:")
-                            st.dataframe(by_dept[["Department", "Budget_Allocated"]])
-                    
-                    with col2:
-                        st.write("Actual Spending")
-                        try:
-                            actual_pie = (
-                                alt.Chart(by_dept)
-                                .mark_arc(innerRadius=30)
-                                .encode(
-                                    theta="Actual_Spent:Q",
-                                    color=alt.Color("Department:N", scale=alt.Scale(scheme="category20")),
-                                    tooltip=["Department", "Actual_Spent:Q"]
-                                )
-                                .properties(height=300)
-                            )
-                            st.altair_chart(actual_pie, use_container_width=True)
-                        except:
-                            # Fallback
-                            st.write("Actual by Department:")
-                            st.dataframe(by_dept[["Department", "Actual_Spent"]])
-                            
-        except Exception as e:
-            st.error(f"Error in department analysis: {e}")
+                        .properties(height=350)
+                    )
+                    st.altair_chart(actual_pie, use_container_width=True)
 
     with tab3:
-        st.write("**📁 Category Analysis**")
+        by_cat = df_f.groupby("Category", as_index=False)[["Actual_Spent", "Budget_Allocated"]].sum()
         
-        try:
-            by_cat = df_f.groupby("Category", as_index=False)[["Actual_Spent", "Budget_Allocated"]].sum()
-            
-            # Comprehensive debug information
-            st.markdown("""
-            <div class="debug-box">
-                <strong>🔍 Category Tab Detailed Debug:</strong><br>
-                • Filtered data shape: {}<br>
-                • Categories in filtered data: {}<br>
-                • Selected categories: {}<br>
-                • Category aggregation shape: {}<br>
-                • Total unique categories in dataset: {}
-            </div>
-            """.format(
-                df_f.shape,
-                list(df_f["Category"].unique()) if not df_f.empty else "None",
-                cat_sel,
-                by_cat.shape,
-                len(df["Category"].unique())
-            ), unsafe_allow_html=True)
-            
-            if by_cat.empty:
-                st.warning("❌ No category data to display. Check your filters!")
-                # Show what's available
-                st.write("**Available categories in dataset:**")
-                st.write(list(sorted(df["Category"].unique())))
-                st.write("**Currently selected categories:**")
-                st.write(cat_sel)
-            else:
-                # Show data preview
-                with st.expander("🔍 Category Data Preview", expanded=True):
-                    st.write(f"✅ Found {len(by_cat)} categories with data:")
-                    st.dataframe(by_cat, use_container_width=True)
+        if by_cat.empty:
+            st.warning("❌ No category data to display. Please check your category filters!")
+        else:
+            if chart_type == "Side-by-Side Bars":
+                st.subheader("Category Budget vs Actual - Side-by-Side Comparison")
+                by_cat_melt = by_cat.melt("Category", var_name="Type", value_name="Amount")
                 
-                # Simple bar chart that should always work
-                if chart_type == "Stacked Bars":
-                    st.write("**Stacked Bar Chart - Budget + Actual by Category**")
+                cat_chart = (
+                    alt.Chart(by_cat_melt)
+                    .mark_bar(size=25)
+                    .encode(
+                        x=alt.X("Category:N", axis=alt.Axis(labelAngle=-45), sort="-y"),
+                        y=alt.Y("Amount:Q", title="Amount ($)"),
+                        color=alt.Color("Type:N", 
+                                      scale=alt.Scale(domain=["Budget_Allocated", "Actual_Spent"], 
+                                                    range=["#3b82f6", "#ef4444"]),
+                                      legend=alt.Legend(title="Type", orient="top")),
+                        xOffset="Type:N",
+                        tooltip=["Category", "Type", "Amount:Q"]
+                    )
+                    .properties(height=450, title="Category Performance Analysis")
+                )
+                st.altair_chart(cat_chart, use_container_width=True)
+                
+            elif chart_type == "Overlapping Bars":
+                st.subheader("Category Budget vs Actual - Overlapping View")
+                
+                # Budget bars (background)
+                budget_bars = (
+                    alt.Chart(by_cat)
+                    .mark_bar(size=40, opacity=0.6)
+                    .encode(
+                        x=alt.X("Category:N", axis=alt.Axis(labelAngle=-45), sort="-y"),
+                        y=alt.Y("Budget_Allocated:Q", title="Amount ($)"),
+                        color=alt.value("#3b82f6"),
+                        tooltip=["Category", alt.Tooltip("Budget_Allocated:Q", format="$,.0f", title="Budget")]
+                    )
+                )
+                
+                # Actual bars (foreground)
+                actual_bars = (
+                    alt.Chart(by_cat)
+                    .mark_bar(size=25, opacity=0.9)
+                    .encode(
+                        x=alt.X("Category:N", sort="-y"),
+                        y=alt.Y("Actual_Spent:Q"),
+                        color=alt.value("#ef4444"),
+                        tooltip=["Category", alt.Tooltip("Actual_Spent:Q", format="$,.0f", title="Actual")]
+                    )
+                )
+                
+                overlapping_chart = (budget_bars + actual_bars).resolve_scale(y="shared").properties(
+                    height=450, title="Overlapping Budget vs Actual Analysis"
+                )
+                st.altair_chart(overlapping_chart, use_container_width=True)
+                
+                st.info("💡 **Chart Guide:** Blue bars = Budget, Red bars = Actual. When red exceeds blue, category is over budget.")
+                
+            elif chart_type == "Variance Focus":
+                st.subheader("Category Performance - Variance Analysis")
+                
+                by_cat["Variance"] = by_cat["Actual_Spent"] - by_cat["Budget_Allocated"]
+                by_cat["Variance_Percent"] = (by_cat["Variance"] / by_cat["Budget_Allocated"] * 100).round(1)
+                
+                # Variance bar chart
+                variance_chart = (
+                    alt.Chart(by_cat)
+                    .mark_bar(size=30)
+                    .encode(
+                        x=alt.X("Category:N", axis=alt.Axis(labelAngle=-45), sort="y"),
+                        y=alt.Y("Variance:Q", title="Variance ($)", scale=alt.Scale(zero=False)),
+                        color=alt.condition(
+                            alt.datum.Variance > 0,
+                            alt.value("#ef4444"),  # Red for over budget
+                            alt.value("#10b981")   # Green for under budget
+                        ),
+                        tooltip=[
+                            "Category", 
+                            alt.Tooltip("Variance:Q", format="$+,.0f"),
+                            alt.Tooltip("Variance_Percent:Q", format="+.1f", title="Variance %")
+                        ]
+                    )
+                    .properties(height=400, title="Category Budget Variance Analysis")
+                )
+                st.altair_chart(variance_chart, use_container_width=True)
+                
+                # Performance tables
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.write("**🟢 Best Categories (Under Budget)**")
+                    best_cat = by_cat.nsmallest(5, "Variance")[["Category", "Variance", "Variance_Percent"]]
+                    best_cat["Variance"] = best_cat["Variance"].apply(lambda x: f"${x:,.0f}")
+                    best_cat["Variance_Percent"] = best_cat["Variance_Percent"].apply(lambda x: f"{x:+.1f}%")
+                    st.dataframe(best_cat, use_container_width=True)
                     
-                    try:
-                        by_cat_melt = by_cat.melt("Category", var_name="Type", value_name="Amount")
-                        st.write("Melted data for chart:")
-                        st.dataframe(by_cat_melt.head(10))
-                        
-                        # Simple stacked chart
-                        cat_chart = (
-                            alt.Chart(by_cat_melt)
-                            .mark_bar()
-                            .encode(
-                                x=alt.X("Category:N", axis=alt.Axis(labelAngle=-45)),
-                                y=alt.Y("Amount:Q", stack="zero"),
-                                color=alt.Color("Type:N", scale=alt.Scale(range=["#3b82f6", "#ef4444"])),
-                                tooltip=["Category", "Type", "Amount:Q"]
-                            )
-                            .properties(height=400)
+                with col2:
+                    st.write("**🔴 Categories Over Budget**")
+                    worst_cat = by_cat.nlargest(5, "Variance")[["Category", "Variance", "Variance_Percent"]]
+                    worst_cat["Variance"] = worst_cat["Variance"].apply(lambda x: f"${x:,.0f}")
+                    worst_cat["Variance_Percent"] = worst_cat["Variance_Percent"].apply(lambda x: f"{x:+.1f}%")
+                    st.dataframe(worst_cat, use_container_width=True)
+                    
+            else:  # Pie Charts
+                st.subheader("Category Distribution")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**Budget Allocation by Category**")
+                    budget_pie = (
+                        alt.Chart(by_cat)
+                        .mark_arc(innerRadius=40, outerRadius=120)
+                        .encode(
+                            theta="Budget_Allocated:Q",
+                            color=alt.Color("Category:N", scale=alt.Scale(scheme="set3")),
+                            tooltip=["Category", alt.Tooltip("Budget_Allocated:Q", format="$,.0f")]
                         )
-                        st.altair_chart(cat_chart, use_container_width=True)
-                        
-                    except Exception as chart_error:
-                        st.error(f"Altair chart error: {chart_error}")
-                        st.write("**Fallback: Using Streamlit bar chart**")
-                        chart_data = by_cat.set_index("Category")[["Budget_Allocated", "Actual_Spent"]]
-                        st.bar_chart(chart_data)
-                        
-                elif chart_type == "Grouped Bars":
-                    st.write("**Grouped Bar Chart - Side by Side Comparison**")
-                    
-                    try:
-                        by_cat_melt = by_cat.melt("Category", var_name="Type", value_name="Amount")
-                        
-                        cat_chart = (
-                            alt.Chart(by_cat_melt)
-                            .mark_bar()
-                            .encode(
-                                x=alt.X("Category:N", axis=alt.Axis(labelAngle=-45)),
-                                y=alt.Y("Amount:Q"),
-                                color=alt.Color("Type:N", scale=alt.Scale(range=["#ef4444", "#3b82f6"])),
-                                xOffset="Type:N",
-                                tooltip=["Category", "Type", "Amount:Q"]
-                            )
-                            .properties(height=400)
+                        .properties(height=350)
+                    )
+                    st.altair_chart(budget_pie, use_container_width=True)
+                
+                with col2:
+                    st.write("**Actual Spending by Category**")
+                    actual_pie = (
+                        alt.Chart(by_cat)
+                        .mark_arc(innerRadius=40, outerRadius=120)
+                        .encode(
+                            theta="Actual_Spent:Q",
+                            color=alt.Color("Category:N", scale=alt.Scale(scheme="set3")),
+                            tooltip=["Category", alt.Tooltip("Actual_Spent:Q", format="$,.0f")]
                         )
-                        st.altair_chart(cat_chart, use_container_width=True)
-                        
-                    except Exception as chart_error:
-                        st.error(f"Altair chart error: {chart_error}")
-                        st.write("**Fallback: Using Streamlit bar chart**")
-                        chart_data = by_cat.set_index("Category")[["Budget_Allocated", "Actual_Spent"]]
-                        st.bar_chart(chart_data)
-                        
-                else:  # Pie Charts
-                    st.write("**Pie Charts - Distribution by Category**")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.write("**Budget Allocation**")
-                        try:
-                            budget_pie = (
-                                alt.Chart(by_cat)
-                                .mark_arc(innerRadius=30)
-                                .encode(
-                                    theta="Budget_Allocated:Q",
-                                    color=alt.Color("Category:N", scale=alt.Scale(scheme="set3")),
-                                    tooltip=["Category", "Budget_Allocated:Q"]
-                                )
-                                .properties(height=300, width=300)
-                            )
-                            st.altair_chart(budget_pie, use_container_width=True)
-                        except Exception as pie_error:
-                            st.error(f"Pie chart error: {pie_error}")
-                            st.write("Budget breakdown:")
-                            st.dataframe(by_cat[["Category", "Budget_Allocated"]])
-                    
-                    with col2:
-                        st.write("**Actual Spending**")
-                        try:
-                            actual_pie = (
-                                alt.Chart(by_cat)
-                                .mark_arc(innerRadius=30)
-                                .encode(
-                                    theta="Actual_Spent:Q",
-                                    color=alt.Color("Category:N", scale=alt.Scale(scheme="set3")),
-                                    tooltip=["Category", "Actual_Spent:Q"]
-                                )
-                                .properties(height=300, width=300)
-                            )
-                            st.altair_chart(actual_pie, use_container_width=True)
-                        except Exception as pie_error:
-                            st.error(f"Pie chart error: {pie_error}")
-                            st.write("Actual spending breakdown:")
-                            st.dataframe(by_cat[["Category", "Actual_Spent"]])
-                            
-        except Exception as e:
-            st.error(f"Error in category analysis: {e}")
-            st.write("**Raw category data for debugging:**")
-            if not df_f.empty:
-                st.dataframe(df_f[["Category", "Actual_Spent", "Budget_Allocated"]].head(20))
-            else:
-                st.write("No filtered data available!")
-
-    with tab2:
-        st.write("**🏢 Department Analysis**")
-        
-        try:
-            by_dept = df_f.groupby("Department", as_index=False)[["Actual_Spent", "Budget_Allocated"]].sum()
+                        .properties(height=350)
+                    )
+                    st.altair_chart(actual_pie, use_container_width=True)
             
-            # Debug department data
-            st.write(f"Department aggregation result: {by_dept.shape}")
-            if not by_dept.empty:
-                st.write("Department totals:")
-                st.dataframe(by_dept, use_container_width=True)
-            
-            if by_dept.empty:
-                st.warning("❌ No department data to display. Check your filters!")
-                st.write("**Available departments in dataset:**")
-                st.write(list(sorted(df["Department"].unique())))
-            else:
-                # Simple charts with fallbacks
-                if chart_type == "Stacked Bars":
-                    st.write("**Stacked Bars**")
-                    try:
-                        by_dept_melt = by_dept.melt("Department", var_name="Type", value_name="Amount")
-                        dept_chart = (
-                            alt.Chart(by_dept_melt)
-                            .mark_bar()
-                            .encode(
-                                x=alt.X("Department:N", axis=alt.Axis(labelAngle=-45)),
-                                y=alt.Y("Amount:Q", stack="zero"),
-                                color=alt.Color("Type:N", scale=alt.Scale(range=["#3b82f6", "#ef4444"])),
-                                tooltip=["Department", "Type", "Amount:Q"]
-                            )
-                            .properties(height=400)
-                        )
-                        st.altair_chart(dept_chart, use_container_width=True)
-                    except:
-                        st.bar_chart(by_dept.set_index("Department")[["Budget_Allocated", "Actual_Spent"]])
-                        
-                elif chart_type == "Grouped Bars":
-                    st.write("**Grouped Bars**")
-                    try:
-                        by_dept_melt = by_dept.melt("Department", var_name="Type", value_name="Amount")
-                        dept_chart = (
-                            alt.Chart(by_dept_melt)
-                            .mark_bar()
-                            .encode(
-                                x=alt.X("Department:N", axis=alt.Axis(labelAngle=-45)),
-                                y=alt.Y("Amount:Q"),
-                                color=alt.Color("Type:N", scale=alt.Scale(range=["#ef4444", "#3b82f6"])),
-                                xOffset="Type:N",
-                                tooltip=["Department", "Type", "Amount:Q"]
-                            )
-                            .properties(height=400)
-                        )
-                        st.altair_chart(dept_chart, use_container_width=True)
-                    except:
-                        st.bar_chart(by_dept.set_index("Department")[["Budget_Allocated", "Actual_Spent"]])
-                        
-                else:  # Pie Charts
-                    st.write("**Pie Charts**")
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        st.write("Budget Distribution")
-                        try:
-                            budget_pie = (
-                                alt.Chart(by_dept)
-                                .mark_arc(innerRadius=30)
-                                .encode(
-                                    theta="Budget_Allocated:Q",
-                                    color="Department:N",
-                                    tooltip=["Department", "Budget_Allocated:Q"]
-                                )
-                                .properties(height=300)
-                            )
-                            st.altair_chart(budget_pie, use_container_width=True)
-                        except:
-                            st.dataframe(by_dept[["Department", "Budget_Allocated"]])
-                    
-                    with col2:
-                        st.write("Actual Distribution")
-                        try:
-                            actual_pie = (
-                                alt.Chart(by_dept)
-                                .mark_arc(innerRadius=30)
-                                .encode(
-                                    theta="Actual_Spent:Q",
-                                    color="Department:N",
-                                    tooltip=["Department", "Actual_Spent:Q"]
-                                )
-                                .properties(height=300)
-                            )
-                            st.altair_chart(actual_pie, use_container_width=True)
-                        except:
-                            st.dataframe(by_dept[["Department", "Actual_Spent"]])
-                            
-        except Exception as e:
-            st.error(f"Error in department analysis: {e}")
-            st.write("Raw data for debugging:")
-            if not df_f.empty:
-                st.dataframe(df_f[["Department", "Actual_Spent", "Budget_Allocated"]].head(10))
+            # Summary statistics
+            if chart_type != "Pie Charts":
+                st.markdown("---")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    total_budget_cat = by_cat["Budget_Allocated"].sum()
+                    st.metric("💰 Total Budget", f"${total_budget_cat:,.0f}")
+                with col2:
+                    total_actual_cat = by_cat["Actual_Spent"].sum()
+                    st.metric("💳 Total Actual", f"${total_actual_cat:,.0f}")
+                with col3:
+                    variance_cat = total_actual_cat - total_budget_cat
+                    variance_pct_cat = (variance_cat / total_budget_cat * 100) if total_budget_cat else 0
+                    st.metric("📊 Net Variance", f"${variance_cat:+,.0f}", f"{variance_pct_cat:+.1f}%")
 
 # === Helper Functions ===
 def tbl(df_):
@@ -1258,12 +1222,10 @@ Instructions:
 # Enhanced tip section
 st.markdown("""
 <div class="caption-style">
-    <strong>💡 Pro Tips:</strong> 
-    • Use sidebar filters to focus your analysis
-    • Charts update automatically based on your selections
-    • **Best chart types for budget comparison:** Side-by-Side Bars (easy comparison), Overlapping Bars (space efficient), Variance Focus (shows differences)
-    • Toggle debug info if charts aren't displaying properly
-    • Q&A sends only relevant data to AI for faster, more accurate responses
-    • Try questions like "Which department overspent the most?" or "Show me Q4 2023 trends"
+    <strong>💡 Executive Dashboard Tips:</strong> 
+    • **Monthly Trends:** Strategic overview (line), accountability (bars), combination view, and variance analysis
+    • **Best chart types:** Side-by-Side Bars (easy comparison), Overlapping Bars (space efficient), Variance Focus (shows performance gaps)
+    • Charts update automatically based on sidebar filters
+    • Use AI-powered Q&A for deeper insights: "Which department overspent the most?" or "Show me Q4 2023 trends"
 </div>
 """, unsafe_allow_html=True)
