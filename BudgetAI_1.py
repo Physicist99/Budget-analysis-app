@@ -43,6 +43,15 @@ st.markdown("""
     .stTabs [aria-selected="true"] {
         background: linear-gradient(45deg, #3b82f6, #1d4ed8); color: white;
     }
+    .ai-box {
+        border-radius: 12px; padding: 1rem 1.25rem;
+        background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 60%, #1e40af 100%);
+        color: white; margin-top: 1rem;
+    }
+    .ai-result {
+        border-radius: 12px; padding: 1rem 1.25rem; background: #0b1220; color: #e5e7eb;
+        border: 1px solid #1f2a44; box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -55,7 +64,7 @@ client = OpenAI(api_key=api_key) if api_key else None
 if not api_key:
     st.markdown("""
     <div style="background: linear-gradient(45deg, #f59e0b, #d97706); color: white; padding: 1rem; border-radius: 8px; margin: 1rem 0;">
-        ⚠️ <strong>OpenAI API Key not found:</strong> Add OPENAI_API_KEY to .env or Streamlit secrets to enable GPT features (optional).
+        ⚠️ <strong>OpenAI API Key not found:</strong> Add OPENAI_API_KEY to .env or Streamlit secrets to enable GPT features.
     </div>
     """, unsafe_allow_html=True)
 
@@ -135,6 +144,82 @@ def load_forecast(path: str) -> pd.DataFrame | None:
     except Exception as e:
         st.error(f"Error loading forecast: {e}")
         return None
+
+def build_ai_context(df_f: pd.DataFrame) -> dict:
+    """Compact, structured context for the AI—keeps tokens low but useful."""
+    # Overall metrics
+    totals = {
+        "total_budget": float(df_f["Budget_Allocated"].sum()),
+        "total_spent": float(df_f["Actual_Spent"].sum()),
+        "total_variance": float((df_f["Actual_Spent"] - df_f["Budget_Allocated"]).sum()),
+        "avg_variance_pct": float(df_f["Variance_Percent"].mean()),
+        "date_min": df_f["Month"].min().strftime("%Y-%m"),
+        "date_max": df_f["Month"].max().strftime("%Y-%m"),
+        "records": int(len(df_f)),
+        "departments": sorted(df_f["Department"].unique().tolist()),
+        "categories": sorted(df_f["Category"].unique().tolist()),
+    }
+    # Monthly totals (small)
+    m = (
+        df_f.groupby(pd.Grouper(key="Month", freq="MS"), as_index=False)
+        .agg(Budget_Allocated=("Budget_Allocated", "sum"),
+             Actual_Spent=("Actual_Spent", "sum"))
+    )
+    m["Variance"] = m["Actual_Spent"] - m["Budget_Allocated"]
+    monthly = [
+        {"Month": d.strftime("%Y-%m"),
+         "Allocated": float(a),
+         "Spent": float(s),
+         "Variance": float(v)}
+        for d, a, s, v in zip(m["Month"], m["Budget_Allocated"], m["Actual_Spent"], m["Variance"])
+    ]
+    # Top 8 over and under by Department
+    dept = (
+        df_f.groupby("Department", as_index=False)
+        .agg(Allocated=("Budget_Allocated", "sum"),
+             Spent=("Actual_Spent", "sum"))
+    )
+    dept["Variance"] = dept["Spent"] - dept["Allocated"]
+    top_over = dept.sort_values("Variance", ascending=False).head(8)
+    top_under = dept.sort_values("Variance", ascending=True).head(8)
+    dept_over = top_over.to_dict(orient="records")
+    dept_under = top_under.to_dict(orient="records")
+
+    # Category view (top 8 by abs variance)
+    cat = (
+        df_f.groupby("Category", as_index=False)
+        .agg(Allocated=("Budget_Allocated", "sum"),
+             Spent=("Actual_Spent", "sum"))
+    )
+    cat["Variance"] = cat["Spent"] - cat["Allocated"]
+    cat_abs = cat.assign(absV=cat["Variance"].abs()).sort_values("absV", ascending=False).drop(columns="absV").head(8)
+    cat_top = cat_abs.to_dict(orient="records")
+
+    return {
+        "totals": totals,
+        "monthly": monthly,
+        "department_top_over": dept_over,
+        "department_top_under": dept_under,
+        "category_top": cat_top,
+    }
+
+def call_openai(system_msg: str, user_msg: str, temperature: float = 0.2) -> str:
+    """Simple wrapper for OpenAI chat completions."""
+    if not client:
+        return "OpenAI API key not configured."
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=temperature,
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=900,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        return f"⚠️ OpenAI error: {e}"
 
 # =============================
 # Load Data
@@ -392,6 +477,71 @@ with tab3:
         .properties(height=420)
     )
     st.altair_chart(chart_cat, use_container_width=True)
+
+# =============================
+# 🤖 AI-Powered Insights
+# =============================
+st.markdown("### 🤖 AI-Powered Insights")
+st.markdown('<div class="ai-box">Get intelligent analysis and answers about your budget data.</div>', unsafe_allow_html=True)
+
+if client:
+    ai_mode = st.radio(
+        "Choose an option:",
+        ["Ask Question", "Quick Analysis"],
+        horizontal=True
+    )
+
+    context = build_ai_context(df_f)
+    if ai_mode == "Ask Question":
+        with st.form("ask_form", clear_on_submit=False):
+            q = st.text_area(
+                "Ask a question about the CURRENTLY FILTERED data (e.g., “Which departments are most over budget in FY2025 Q3?”)",
+                placeholder="Type your question..."
+            )
+            temp = st.slider("Creativity (temperature)", 0.0, 1.0, 0.2, 0.05)
+            submitted = st.form_submit_button("Ask")
+        if submitted:
+            sys = (
+                "You are a precise financial analyst. Answer ONLY using the provided structured context. "
+                "If the answer is not derivable from context, say so briefly. Use clear bullets, include $-formatted values, "
+                "and reference the active filter window when relevant."
+            )
+            user = (
+                f"Question: {q}\n\n"
+                f"Context JSON:\n{context}"
+            )
+            ans = call_openai(sys, user, temperature=temp)
+            st.markdown("#### Answer")
+            st.markdown(f"<div class='ai-result'>{ans}</div>", unsafe_allow_html=True)
+
+    else:  # Quick Analysis
+        with st.form("quick_form"):
+            style = st.selectbox(
+                "Summary style",
+                ["Executive (bullets + short narrative)", "Risks & Opportunities", "Action Items"],
+                index=0
+            )
+            submitted2 = st.form_submit_button("Generate Summary")
+        if submitted2:
+            sys = (
+                "You are a senior FP&A analyst. Based on the provided structured data, produce a concise, decision-focused summary. "
+                "Include 5–7 bullet points and a 3–5 sentence narrative. Call out variances, trends, and material drivers by department/category. "
+                "Use $ and % formatting as shown and keep it scoped to the filter window."
+            )
+            prompt_style = {
+                "Executive (bullets + short narrative)": "Provide bullets then a short narrative.",
+                "Risks & Opportunities": "Focus on top risks and opportunities and mitigation ideas.",
+                "Action Items": "List prioritized actions with owners and time horizons."
+            }[style]
+            user = (
+                f"Write a '{style}' summary for the filtered data. {prompt_style}\n\n"
+                f"Context JSON:\n{context}"
+            )
+            ans = call_openai(sys, user, temperature=0.2)
+            st.markdown("#### Summary")
+            st.markdown(f"<div class='ai-result'>{ans}</div>", unsafe_allow_html=True)
+else:
+    st.info("Add your OPENAI_API_KEY to enable Ask Question and Quick Analysis.")
 
 # =============================
 # Details & Downloads
