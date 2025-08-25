@@ -160,9 +160,9 @@ with st.sidebar:
     colA, colB = st.columns(2)
     with colA:
         st.metric("📋 Records", f"{len(df):,}")
-        st.metric("🏢 Departments", len(df["Department"].nunique()))
+        st.metric("🏢 Departments", f"{df['Department'].nunique():,}")
     with colB:
-        st.metric("📁 Categories", len(df["Category"].nunique()))
+        st.metric("📁 Categories", f"{df['Category'].nunique():,}")
         st.metric("📅 Years", f"{df['Year'].min()}–{df['Year'].max()}")
 
     st.markdown("---")
