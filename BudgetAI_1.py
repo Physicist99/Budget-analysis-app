@@ -146,7 +146,11 @@ def load_forecast(path: str) -> pd.DataFrame | None:
         return None
 
 def build_ai_context(df_f: pd.DataFrame) -> dict:
-    """Compact, structured context for the AI—keeps tokens low but useful."""
+    """Compact, structured context for the AI—robust across pandas versions."""
+    df_f = df_f.copy()
+    # Ensure Month is datetime
+    df_f["Month"] = pd.to_datetime(df_f["Month"], errors="coerce")
+
     # Overall metrics
     totals = {
         "total_budget": float(df_f["Budget_Allocated"].sum()),
@@ -159,41 +163,49 @@ def build_ai_context(df_f: pd.DataFrame) -> dict:
         "departments": sorted(df_f["Department"].unique().tolist()),
         "categories": sorted(df_f["Category"].unique().tolist()),
     }
-    # Monthly totals (small)
+
+    # ✅ Robust monthly rollup: always returns a 'Month' column
     m = (
-        df_f.groupby(pd.Grouper(key="Month", freq="MS"), as_index=False)
-        .agg(Budget_Allocated=("Budget_Allocated", "sum"),
-             Actual_Spent=("Actual_Spent", "sum"))
+        df_f.resample("MS", on="Month")[["Budget_Allocated", "Actual_Spent"]]
+            .sum()
+            .reset_index()
     )
     m["Variance"] = m["Actual_Spent"] - m["Budget_Allocated"]
+
     monthly = [
-        {"Month": d.strftime("%Y-%m"),
-         "Allocated": float(a),
-         "Spent": float(s),
-         "Variance": float(v)}
-        for d, a, s, v in zip(m["Month"], m["Budget_Allocated"], m["Actual_Spent"], m["Variance"])
+        {
+            "Month": row["Month"].strftime("%Y-%m"),
+            "Allocated": float(row["Budget_Allocated"]),
+            "Spent": float(row["Actual_Spent"]),
+            "Variance": float(row["Variance"]),
+        }
+        for _, row in m.iterrows()
     ]
-    # Top 8 over and under by Department
+
+    # Department top overs/unders
     dept = (
         df_f.groupby("Department", as_index=False)
-        .agg(Allocated=("Budget_Allocated", "sum"),
-             Spent=("Actual_Spent", "sum"))
+            .agg(Allocated=("Budget_Allocated", "sum"),
+                 Spent=("Actual_Spent", "sum"))
     )
     dept["Variance"] = dept["Spent"] - dept["Allocated"]
-    top_over = dept.sort_values("Variance", ascending=False).head(8)
-    top_under = dept.sort_values("Variance", ascending=True).head(8)
-    dept_over = top_over.to_dict(orient="records")
-    dept_under = top_under.to_dict(orient="records")
+    dept_over = dept.sort_values("Variance", ascending=False).head(8).to_dict(orient="records")
+    dept_under = dept.sort_values("Variance", ascending=True).head(8).to_dict(orient="records")
 
-    # Category view (top 8 by abs variance)
+    # Category top by absolute variance
     cat = (
         df_f.groupby("Category", as_index=False)
-        .agg(Allocated=("Budget_Allocated", "sum"),
-             Spent=("Actual_Spent", "sum"))
+            .agg(Allocated=("Budget_Allocated", "sum"),
+                 Spent=("Actual_Spent", "sum"))
     )
     cat["Variance"] = cat["Spent"] - cat["Allocated"]
-    cat_abs = cat.assign(absV=cat["Variance"].abs()).sort_values("absV", ascending=False).drop(columns="absV").head(8)
-    cat_top = cat_abs.to_dict(orient="records")
+    cat_top = (
+        cat.assign(absV=cat["Variance"].abs())
+           .sort_values("absV", ascending=False)
+           .drop(columns="absV")
+           .head(8)
+           .to_dict(orient="records")
+    )
 
     return {
         "totals": totals,
