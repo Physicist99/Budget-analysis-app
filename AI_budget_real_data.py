@@ -356,16 +356,13 @@ def smart_load_fixed() -> pd.DataFrame:
 
 # =============================
 # Load Data (simple fixed filenames only)
-# =============================
+ACTUALS_PATH = "FY 2021 Budget Pull.xlsx"  # put this exact file at repo root
 try:
-    df = smart_load_fixed()
+    df = load_budget_pull(ACTUALS_PATH)
 except Exception as e:
-    st.error(f"""❌ Could not load data.
-Place your file at repo root or ./data/ as:
-- FY 2021 Budget Pull.xlsx  (or .csv / .xls)
-
-Error: {e}""")
+    st.error(f"❌ Could not load data at {ACTUALS_PATH}: {e}")
     st.stop()
+
 
 # =============================
 # Sidebar Filters
