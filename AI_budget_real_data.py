@@ -6,6 +6,7 @@ import os, re, glob
 from dotenv import load_dotenv
 from openai import OpenAI
 from datetime import datetime
+from pathlib import Path
 
 # =============================
 # Page
@@ -235,9 +236,11 @@ def call_openai(system_msg: str, user_msg: str, temperature: float = 0.2, max_to
 def _normalize_header(col: str) -> str:
     return re.sub(r"\s+", " ", str(col)).strip().upper()
 
+from pathlib import Path
+
 def discover_default_data():
     """
-    Find a budget file in the working dir (CSV/XLSX) using flexible patterns.
+    Recursively search the repo for a likely file name in any subfolder.
     """
     patterns = [
         "FY 2021 Budget Pull.csv",
@@ -249,14 +252,21 @@ def discover_default_data():
         "FY_2021_Budget_Pull.*",
         "FY2021*Budget*Pull*.*",
     ]
-    try_dirs = list({os.getcwd(), os.path.dirname(os.path.abspath(__file__)) if '__file__' in globals() else os.getcwd()})
-    for d in try_dirs:
+    roots = [Path.cwd()]
+    try:
+        roots.append(Path(__file__).resolve().parent)
+    except:
+        pass
+    seen = set()
+    for root in roots:
+        if root in seen: 
+            continue
+        seen.add(root)
         for pat in patterns:
-            matches = glob.glob(os.path.join(d, pat))
-            if matches:
-                return matches[0]
+            for p in root.rglob(pat):
+                if p.is_file():
+                    return str(p)
     return None
-
 @st.cache_data
 def load_budget_pull(path: str):
     """
