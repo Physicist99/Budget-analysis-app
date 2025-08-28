@@ -169,7 +169,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # =============================
-# Sidebar brand area + logo (auto light/dark)
+# Sidebar brand area + logo
 # =============================
 with st.sidebar:
     st.markdown("<hr/>", unsafe_allow_html=True)
@@ -234,174 +234,6 @@ def call_openai(system_msg: str, user_msg: str, temperature: float = 0.2, max_to
 def _normalize_header(col: str) -> str:
     return re.sub(r"\s+", " ", str(col)).strip().upper()
 
-@st.cache_data
-def load_budget_pull(uploaded_file_or_path):
-    """
-    Load 'FY 2021 Budget Pull' in CSV or XLSX.
-    Standardized columns:
-    Month, Year, Quarter, Budget_Year, Accounting_Period,
-    Budget_Allocated, Actual_Spent, Variance, Variance_Percent,
-    Encumbered, Pre_Encumbered, Revenue_Amount,
-    Department, Department_ID, Fund_Code, Fund_Desc, Account, Account_Type,
-    Account_Desc, Program_Code, Program_Desc, Ledger_Group, ...
-    """
-    # Read
-    if uploaded_file_or_path is None:
-        raise ValueError("No file provided.")
-    if isinstance(uploaded_file_or_path, str):
-        path = uploaded_file_or_path
-        if not os.path.exists(path):
-            raise ValueError(f"File not found: {path}")
-        if path.lower().endswith((".xlsx", ".xls")):
-            raw = pd.read_excel(path)
-        else:
-            raw = pd.read_csv(path)
-    else:
-        # Streamlit UploadedFile
-        if uploaded_file_or_path.name.lower().endswith((".xlsx", ".xls")):
-            raw = pd.read_excel(uploaded_file_or_path)
-        else:
-            raw = pd.read_csv(uploaded_file_or_path)
-
-    # Map columns
-    col_map = {
-        "BUDGET YEAR": "Budget_Year",
-        "ACCOUNTING PERIOD": "Accounting_Period",
-        "FUND CODE": "Fund_Code",
-        "FUND CODE DESCRIPTION": "Fund_Desc",
-        "DEPARTMENT ID": "Department_ID",
-        "DEPARTMENT ID DESCRIPTION": "Department",
-        "ACCOUNT": "Account",
-        "ACCOUNT TYPE": "Account_Type",
-        "ACCOUNT DESCRIPTION": "Account_Desc",
-        "PROGRAM CODE": "Program_Code",
-        "PROGRAM DESCRIPTION": "Program_Desc",
-        "LEDGER GROUP": "Ledger_Group",
-        "BUDGET AMOUNT": "Budget_Allocated",
-        "EXPENSE AMOUNT": "Actual_Spent",
-        "ENCUMBERED AMOUNT": "Encumbered",
-        "PRE ENCUMBERED AMOUNT": "Pre_Encumbered",
-        "REVENUE AMOUNT": "Revenue_Amount",
-    }
-    rename = {}
-    for c in raw.columns:
-        key = _normalize_header(c)
-        if key in col_map:
-            rename[c] = col_map[key]
-    df = raw.rename(columns=rename).copy()
-
-    # Validate required fields
-    req = ["Budget_Year", "Accounting_Period", "Budget_Allocated", "Actual_Spent"]
-    miss = [c for c in req if c not in df.columns]
-    if miss:
-        raise ValueError(f"Missing required columns: {miss}")
-
-    # Optional fields ensure presence
-    optional_defaults = {
-        "Fund_Code": None, "Fund_Desc": None, "Department_ID": None, "Department": None,
-        "Account": None, "Account_Type": None, "Account_Desc": None, "Program_Code": None,
-        "Program_Desc": None, "Ledger_Group": None, "Encumbered": 0.0,
-        "Pre_Encumbered": 0.0, "Revenue_Amount": 0.0
-    }
-    for k, v in optional_defaults.items():
-        if k not in df.columns:
-            df[k] = v
-
-    # Types
-    for c in ["Budget_Year", "Accounting_Period", "Department_ID", "Account", "Program_Code", "Fund_Code"]:
-        if c in df.columns:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-    for c in ["Budget_Allocated", "Actual_Spent", "Encumbered", "Pre_Encumbered", "Revenue_Amount"]:
-        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
-
-    # Keep calendar months only
-    df = df[(df["Accounting_Period"] >= 1) & (df["Accounting_Period"] <= 12)].copy()
-
-    # Build Month
-    df["Month"] = pd.to_datetime(
-        df["Budget_Year"].astype("Int64").astype(str) + "-" +
-        df["Accounting_Period"].astype("Int64").astype(str).str.zfill(2) + "-01",
-        errors="coerce"
-    )
-
-    # Friendly fallbacks
-    if df["Department"].isna().all() and "Department_ID" in df.columns:
-        df["Department"] = df["Department_ID"].astype("Int64").astype(str)
-
-    # Variance baseline (Actual only)
-    df["Variance"] = df["Actual_Spent"] - df["Budget_Allocated"]
-    df["Variance_Percent"] = (
-        df["Variance"] / df["Budget_Allocated"].replace({0: pd.NA})
-    ).astype(float) * 100
-    df["Variance_Percent"] = df["Variance_Percent"].round(2)
-
-    # Year / Quarter
-    df["Year"] = df["Month"].dt.year
-    df["Quarter"] = df["Month"].dt.quarter
-
-    # Order columns
-    pref_cols = [
-        "Month","Year","Quarter","Budget_Year","Accounting_Period",
-        "Budget_Allocated","Actual_Spent","Variance","Variance_Percent",
-        "Encumbered","Pre_Encumbered","Revenue_Amount",
-        "Department","Department_ID","Fund_Code","Fund_Desc","Account","Account_Type",
-        "Account_Desc","Program_Code","Program_Desc","Ledger_Group"
-    ]
-    other_cols = [c for c in df.columns if c not in pref_cols]
-    df = df[pref_cols + other_cols]
-
-    return df.dropna(subset=["Month"]).sort_values("Month").reset_index(drop=True)
-
-def tbl(df_):
-    return "(none)" if df_.empty else df_.to_string(index=False)
-
-def parse_month_year(text: str):
-    month_map = {m.lower(): i for i, m in enumerate(
-        ["January","February","March","April","May","June","July","August","September","October","November","December"], 1)}
-    m1 = re.search(r'\b([A-Za-z]{3,9})\s+(\d{4})\b', text or "")
-    if m1:
-        mname = m1.group(1).lower()
-        yr = int(m1.group(2))
-        mon = month_map.get(mname)
-        if mon is None:
-            for full, idx in month_map.items():
-                if full.startswith(mname):
-                    mon = idx; break
-        if mon: return yr, mon
-    m2 = re.search(r'\b(20\d{2})[-/](0?[1-9]|1[0-2])\b', text or "")
-    if m2: return int(m2.group(1)), int(m2.group(2))
-    m3 = re.search(r'\b(0?[1-9]|1[0-2])[-/](20\d{2})\b', text or "")
-    if m3: return int(m3.group(2)), int(m3.group(1))
-    return None, None
-
-def extract_match(text, options):
-    text_l = str(text).lower()
-    for opt in options:
-        if str(opt).lower() in text_l:
-            return opt
-    return None
-
-def build_compact_summary(actuals_df: pd.DataFrame, cat_field: str):
-    a_month = actuals_df.groupby("Month", as_index=False)[["Actual_Effective","Budget_Allocated"]].sum()
-    a_month["Month"] = a_month["Month"].dt.strftime("%Y-%m")
-    a_dept = (actuals_df.groupby("Department", as_index=False)[["Actual_Effective","Budget_Allocated"]]
-              .sum().sort_values("Actual_Effective", ascending=False).head(10))
-    a_cat = (actuals_df.groupby(cat_field, as_index=False)[["Actual_Effective","Budget_Allocated"]]
-             .sum().sort_values("Actual_Effective", ascending=False).head(10))
-    prompt = f"""
-Use these compact summaries to answer succinctly.
-
-ACTUALS — monthly (Allocated vs Spent):
-{tbl(a_month.tail(24))}
-
-ACTUALS — top departments:
-{tbl(a_dept)}
-
-ACTUALS — top by {cat_field}:
-{tbl(a_cat)}
-"""
-    return prompt
-
 def discover_default_data():
     """
     Find a budget file in the working dir (CSV/XLSX) using flexible patterns.
@@ -424,60 +256,209 @@ def discover_default_data():
                 return matches[0]
     return None
 
-# =============================
-# Load Data (uploader / manual path / auto-discover)
-# =============================
-with st.sidebar:
-    st.markdown('<div class="filter-header">📦 Data</div>', unsafe_allow_html=True)
-    uploaded = st.file_uploader("Upload 'FY 2021 Budget Pull' (CSV or XLSX)", type=["csv", "xlsx", "xls"])
-    manual_path = st.text_input("…or enter a server file path", value="", placeholder="/mount/src/budget-analysis-app/FY 2021 Budget Pull.xlsx")
+@st.cache_data
+def load_budget_pull(uploaded_file_or_path):
+    """
+    Load 'FY 2021 Budget Pull' (CSV/XLSX) with robust header synonyms & period parsing.
+    Standardized columns returned (subset shown):
+    Month, Year, Quarter, Budget_Year, Accounting_Period,
+    Budget_Allocated, Actual_Spent, Variance, Variance_Percent,
+    Encumbered, Pre_Encumbered, Revenue_Amount,
+    Department, Department_ID, Fund_Code, Fund_Desc, Account, Account_Type,
+    Account_Desc, Program_Code, Program_Desc, Ledger_Group, ...
+    """
+    # Read raw
+    if uploaded_file_or_path is None:
+        raise ValueError("No file provided.")
+    path = uploaded_file_or_path
+    if not os.path.exists(path):
+        raise ValueError(f"File not found: {path}")
+    if path.lower().endswith((".xlsx", ".xls")):
+        raw = pd.read_excel(path)
+    else:
+        raw = pd.read_csv(path)
 
+    # Aliases
+    alias = {
+        # REQUIRED
+        "BUDGET YEAR": ["FISCAL YEAR","FY","YEAR","BUDGET_YEAR"],
+        "ACCOUNTING PERIOD": ["PERIOD","PERIOD NUMBER","ACCOUNTING_PERIOD","PERIOD NO","MONTH","ACCOUNTING MONTH","PERIOD NAME"],
+        "BUDGET AMOUNT": ["BUDGET","ADOPTED BUDGET","AMENDED BUDGET","BUDGET TOTAL","APPROPRIATION","APPROPRIATED AMOUNT","BUDGET_AMT"],
+        "EXPENSE AMOUNT": ["EXPENDITURE AMOUNT","ACTUALS","ACTUAL EXPENSE","ACTUAL EXPENDITURE","YTD EXPENSE","AMOUNT EXPENDED","EXPENSE","ACTUAL_AMOUNT"],
+        # OPTIONAL
+        "DEPARTMENT ID DESCRIPTION": ["DEPARTMENT NAME","DEPARTMENT","DEPARTMENT DESC"],
+        "FUND CODE DESCRIPTION": ["FUND DESCRIPTION","FUND DESC"],
+        "PROGRAM DESCRIPTION": ["PROGRAM DESC"],
+        "ACCOUNT TYPE": ["ACCT TYPE"],
+        "ACCOUNT DESCRIPTION": ["ACCOUNT DESC"],
+        "ENCUMBERED AMOUNT": ["ENCUMBRANCE","ENCUMBERED"],
+        "PRE ENCUMBERED AMOUNT": ["PRE ENCUMBRANCE","PRE-ENCUMBRANCE"],
+        "REVENUE AMOUNT": ["REVENUE","REV AMOUNT","REVENUE_TOTAL"],
+        "DEPARTMENT ID": ["DEPT ID","DEPARTMENT_ID"],
+        "FUND CODE": ["FUND","FUND_ID"],
+        "PROGRAM CODE": ["PROGRAM","PROGRAM_ID"],
+        "LEDGER GROUP": ["LEDGER","LEDGER GROUP NAME"],
+        "ACCOUNT": ["ACCOUNT CODE","ACCT"]
+    }
+    canonical = {
+        "BUDGET YEAR": "Budget_Year",
+        "ACCOUNTING PERIOD": "Accounting_Period",
+        "BUDGET AMOUNT": "Budget_Allocated",
+        "EXPENSE AMOUNT": "Actual_Spent",
+        "DEPARTMENT ID DESCRIPTION": "Department",
+        "FUND CODE DESCRIPTION": "Fund_Desc",
+        "PROGRAM DESCRIPTION": "Program_Desc",
+        "ACCOUNT TYPE": "Account_Type",
+        "ACCOUNT DESCRIPTION": "Account_Desc",
+        "ENCUMBERED AMOUNT": "Encumbered",
+        "PRE ENCUMBERED AMOUNT": "Pre_Encumbered",
+        "REVENUE AMOUNT": "Revenue_Amount",
+        "DEPARTMENT ID": "Department_ID",
+        "FUND CODE": "Fund_Code",
+        "PROGRAM CODE": "Program_Code",
+        "LEDGER GROUP": "Ledger_Group",
+        "ACCOUNT": "Account"
+    }
+    lookup = {}
+    for key, syns in alias.items():
+        lookup[_normalize_header(key)] = key
+        for s in syns:
+            lookup[_normalize_header(s)] = key
+
+    # Rename to canonical app names
+    norm_cols = {_normalize_header(c): c for c in raw.columns}
+    rename_map = {}
+    for norm, orig in norm_cols.items():
+        if norm in lookup:
+            canonical_key = lookup[norm]
+            rename_map[orig] = canonical[canonical_key]
+    df = raw.rename(columns=rename_map).copy()
+
+    # Validate required
+    required = ["Budget_Year", "Accounting_Period", "Budget_Allocated", "Actual_Spent"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(
+            "Missing required columns after header normalization. "
+            f"Not found: {missing}. Rename your headers or extend the alias list."
+        )
+
+    # Ensure optional presence
+    optional_defaults = {
+        "Fund_Code": None, "Fund_Desc": None, "Department_ID": None, "Department": None,
+        "Account": None, "Account_Type": None, "Account_Desc": None, "Program_Code": None,
+        "Program_Desc": None, "Ledger_Group": None, "Encumbered": 0.0,
+        "Pre_Encumbered": 0.0, "Revenue_Amount": 0.0
+    }
+    for k, v in optional_defaults.items():
+        if k not in df.columns:
+            df[k] = v
+
+    # Types
+    for c in ["Budget_Year","Department_ID","Account","Program_Code","Fund_Code"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Accounting_Period: accept 1..12, "Jan"/"FEB"/"March", or "YYYY-MM"
+    def _coerce_period(x):
+        if pd.isna(x):
+            return pd.NA
+        s = str(x).strip()
+        m = re.match(r"^(20\d{2})[-/](0?[1-9]|1[0-2])$", s)  # YYYY-MM
+        if m:
+            return int(m.group(2))
+        mon_map = {"JAN":1,"FEB":2,"MAR":3,"APR":4,"MAY":5,"JUN":6,"JUL":7,"AUG":8,"SEP":9,"SEPT":9,"OCT":10,"NOV":11,"DEC":12}
+        up = s.upper()
+        if up.startswith("SEPT"): return 9
+        if up[:3] in mon_map: return mon_map[up[:3]]
+        return pd.to_numeric(s, errors="coerce")
+
+    df["Accounting_Period"] = df["Accounting_Period"].apply(_coerce_period)
+    df["Accounting_Period"] = pd.to_numeric(df["Accounting_Period"], errors="coerce")
+
+    # Money columns
+    for c in ["Budget_Allocated","Actual_Spent","Encumbered","Pre_Encumbered","Revenue_Amount"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+
+    # Valid months only
+    df = df[(df["Accounting_Period"] >= 1) & (df["Accounting_Period"] <= 12)].copy()
+
+    # Build Month
+    df["Month"] = pd.to_datetime(
+        df["Budget_Year"].astype("Int64").astype(str) + "-" +
+        df["Accounting_Period"].astype("Int64").astype(str).str.zfill(2) + "-01",
+        errors="coerce"
+    )
+
+    # Fallback for Department
+    if df["Department"].isna().all() and "Department_ID" in df.columns:
+        df["Department"] = df["Department_ID"].astype("Int64").astype(str)
+
+    # Variance baseline (Actual only)
+    df["Variance"] = df["Actual_Spent"] - df["Budget_Allocated"]
+    df["Variance_Percent"] = (
+        df["Variance"] / df["Budget_Allocated"].replace({0: pd.NA})
+    ).astype(float) * 100
+    df["Variance_Percent"] = df["Variance_Percent"].round(2)
+
+    df = df.dropna(subset=["Month"]).copy()
+    df["Year"] = df["Month"].dt.year
+    df["Quarter"] = df["Month"].dt.quarter
+
+    pref_cols = [
+        "Month","Year","Quarter","Budget_Year","Accounting_Period",
+        "Budget_Allocated","Actual_Spent","Variance","Variance_Percent",
+        "Encumbered","Pre_Encumbered","Revenue_Amount",
+        "Department","Department_ID","Fund_Code","Fund_Desc","Account","Account_Type",
+        "Account_Desc","Program_Code","Program_Desc","Ledger_Group"
+    ]
+    other_cols = [c for c in df.columns if c not in pref_cols]
+    df = df[pref_cols + other_cols]
+
+    return df.sort_values("Month").reset_index(drop=True)
+
+# =============================
+# Load Data (no upload UI)
+# =============================
+DATA_PATH = os.getenv("BUDGET_DATA_PATH")  # optional env var
 df = None
 load_error = None
 
-# 1) Prefer uploaded file
-if uploaded is not None:
+if DATA_PATH:
     try:
-        df = load_budget_pull(uploaded)
+        df = load_budget_pull(DATA_PATH)
     except Exception as e:
-        load_error = f"Upload failed: {e}"
+        load_error = f"{e}"
 
-# 2) Manual server path
-if df is None and manual_path.strip():
-    try:
-        df = load_budget_pull(manual_path.strip())
-    except Exception as e:
-        load_error = f"Manual path failed: {e}"
-
-# 3) Auto-discover in repo/workdir
-if df is None and not manual_path.strip():
+if df is None:
     discovered = discover_default_data()
     if discovered:
         try:
             df = load_budget_pull(discovered)
-            st.sidebar.info(f"Found data file: {os.path.basename(discovered)}")
+            st.sidebar.info(f"Loaded: {os.path.basename(discovered)}")
         except Exception as e:
-            load_error = f"Autodiscovery failed for '{discovered}': {e}"
+            load_error = f"{e}"
 
-# 4) Friendly empty state
 if df is None:
     if load_error:
         st.error(f"❌ Could not load data: {load_error}")
     st.markdown("""
     <div style="padding:1.25rem;border:1px dashed #94a3b8;border-radius:12px;background:#ffffff0d">
       <h3 style="margin:0 0 .5rem 0;">No data loaded</h3>
-      <p style="margin:.25rem 0 .5rem 0;">Upload your “FY 2021 Budget Pull” file in the sidebar, paste a server path, or rename the file to a common pattern (e.g., <code>FY 2021 Budget Pull.xlsx</code>) and place it in the working directory.</p>
+      <p style="margin:.25rem 0 .5rem 0;">
+      Place your file in the working directory as <code>FY 2021 Budget Pull.xlsx</code> (or .csv / .xls),
+      or set an environment variable <code>BUDGET_DATA_PATH=/abs/path/to/file.xlsx</code>.
+      </p>
       <ul style="margin:.5rem 0 0 1rem;">
         <li>Supported: CSV / XLSX / XLS</li>
-        <li>Required: <em>BUDGET YEAR, ACCOUNTING PERIOD, BUDGET AMOUNT, EXPENSE AMOUNT</em></li>
-        <li>Optional: Fund/Program/Account/Ledger, Encumbrances, Revenue</li>
+        <li>Required headers (any synonyms supported): <em>BUDGET YEAR, ACCOUNTING PERIOD, BUDGET AMOUNT, EXPENSE AMOUNT</em></li>
       </ul>
     </div>
     """, unsafe_allow_html=True)
     st.stop()
 
 # =============================
-# Sidebar Filters (order ensures sliders reflect encumbrance setting)
+# Sidebar Filters
 # =============================
 with st.sidebar:
     st.markdown('<div class="filter-header">🎛️ Control Panel</div>', unsafe_allow_html=True)
@@ -494,7 +475,6 @@ with st.sidebar:
     st.markdown("---")
     st.markdown('<div class="filter-header">🔍 Primary Filters</div>', unsafe_allow_html=True)
 
-    # Choose the category dimension used for charts
     cat_field_display_map = {
         "Account Type": "Account_Type",
         "Account Description": "Account_Desc",
@@ -510,17 +490,15 @@ with st.sidebar:
     cat_sel = st.multiselect(f"📁 {category_choice}(s)", sorted(df[CAT_FIELD].dropna().unique()),
                              default=sorted(df[CAT_FIELD].dropna().unique()))
 
-    # Date range
     min_m = pd.to_datetime(df["Month"].min()).to_pydatetime()
     max_m = pd.to_datetime(df["Month"].max()).to_pydatetime()
     date_range = st.slider("📅 Month Range", value=(min_m, max_m),
                            min_value=min_m, max_value=max_m, format="YYYY-MM")
 
-    # Include encumbrances BEFORE we compute sliders
     st.markdown('<div class="filter-header">🔧 Options</div>', unsafe_allow_html=True)
     include_commitments = st.checkbox("Include Encumbrances in 'Spent' (Actual + Encumbered + Pre-Enc.)", value=False)
 
-    # Build a preview frame for slider ranges respecting the encumbrance toggle
+    # Effective preview columns (for slider ranges)
     df_preview = df.copy()
     if include_commitments:
         df_preview["Actual_Effective"] = df_preview["Actual_Spent"] + df_preview["Encumbered"] + df_preview["Pre_Encumbered"]
@@ -559,7 +537,7 @@ with st.sidebar:
         ledger_sel = st.multiselect("📚 Ledger Group", sorted(df["Ledger_Group"].dropna().unique()),
                                     default=sorted(df["Ledger_Group"].dropna().unique()))
 
-# Apply filters on a working copy that respects the toggle
+# Apply filters on working copy
 df_work = df.copy()
 if include_commitments:
     df_work["Actual_Effective"] = df_work["Actual_Spent"] + df_work["Encumbered"] + df_work["Pre_Encumbered"]
@@ -661,13 +639,13 @@ display_df["Variance_Pct_Display"] = display_df["Variance_Percent_Effective"].ap
 
 st.dataframe(
     display_df[[
-        "Month_Display","Budget_Year","Accounting_Period","Department",CAT_FIELD,
+        "Month_Display","Budget_Year","Accounting_Period","Department",
         "Fund_Desc","Program_Desc","Ledger_Group",
         "Budget_Display","Actual_Display","Variance_Display","Variance_Pct_Display"
     ]].rename(columns={
         "Month_Display":"Month", "Budget_Year":"Budget Year", "Accounting_Period":"Period",
-        CAT_FIELD: category_choice, "Fund_Desc":"Fund", "Program_Desc":"Program",
-        "Ledger_Group":"Ledger Group", "Budget_Display":"Budget", "Actual_Display":"Actual (Eff.)",
+        "Fund_Desc":"Fund", "Program_Desc":"Program", "Ledger_Group":"Ledger Group",
+        "Budget_Display":"Budget", "Actual_Display":"Actual (Eff.)",
         "Variance_Display":"Variance ($)", "Variance_Pct_Display":"Variance (%)"
     }),
     use_container_width=True, height=420
@@ -678,14 +656,13 @@ st.dataframe(
 # =============================
 st.markdown("---")
 st.subheader("📈 Visual Analytics")
-tab1, tab2, tab3, tab4 = st.tabs(["📊 Monthly Trends", "🏢 By Department", f"🗂️ By {category_choice}", "🔎 By Any Column"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Monthly Trends", "🏢 By Department", "🗂️ By Category", "🔎 By Any Column"])
 
 with tab1:
     monthly = df_f.groupby("Month", as_index=False)[["Budget_Allocated","Actual_Effective"]].sum().sort_values("Month")
     m_long = monthly.melt(id_vars="Month", value_vars=["Budget_Allocated","Actual_Effective"],
                           var_name="Type", value_name="Amount")
     m_long["Type"] = m_long["Type"].map({"Budget_Allocated":"Allocated","Actual_Effective":"Spent"})
-
     color_scale = alt.Scale(domain=["Allocated","Spent"], range=[pal["alloc"], pal["spent"]])
     chart_monthly = (
         alt.Chart(m_long)
@@ -718,7 +695,7 @@ with tab2:
             x=alt.X("Department:N", sort=order, axis=alt.Axis(labelAngle=-45), title="Department"),
             y=alt.Y("Amount:Q", axis=alt.Axis(format="$,.0f"), title="Amount ($)"),
             color=alt.Color("Type:N", title="", scale=alt.Scale(domain=["Allocated","Spent"],
-                                                                range=[pal["alloc"], pal["spent"]])),
+                                                                range=[pal["alloc"], pal["spent']])),
             xOffset="Type:N",
             tooltip=[alt.Tooltip("Department:N"), alt.Tooltip("Type:N"),
                      alt.Tooltip("Amount:Q", title="Amount", format=",.0f")]
@@ -727,6 +704,7 @@ with tab2:
     st.altair_chart(chart_dept, use_container_width=True)
 
 with tab3:
+    # Category = the select above (CAT_FIELD)
     cat_tot = df_f.groupby(CAT_FIELD, as_index=False).agg(
         Allocated=("Budget_Allocated","sum"),
         Spent=("Actual_Effective","sum")
@@ -739,12 +717,12 @@ with tab3:
         alt.Chart(cat_long)
         .mark_bar(cornerRadius=3)
         .encode(
-            x=alt.X(f"{CAT_FIELD}:N", sort=order_cat, axis=alt.Axis(labelAngle=-45), title=category_choice),
+            x=alt.X(f"{CAT_FIELD}:N", sort=order_cat, axis=alt.Axis(labelAngle=-45), title="Category"),
             y=alt.Y("Amount:Q", axis=alt.Axis(format="$,.0f"), title="Amount ($)"),
             color=alt.Color("Type:N", title="", scale=alt.Scale(domain=["Allocated","Spent"],
-                                                                range=[pal["alloc"], pal["spent"]])),
+                                                                range=[pal["alloc"], pal["spent']])),
             xOffset="Type:N",
-            tooltip=[alt.Tooltip(f"{CAT_FIELD}:N", title=category_choice), alt.Tooltip("Type:N"),
+            tooltip=[alt.Tooltip(f"{CAT_FIELD}:N", title="Category"), alt.Tooltip("Type:N"),
                      alt.Tooltip("Amount:Q", title="Amount", format=",.0f")]
         ).properties(height=420)
     )
@@ -773,7 +751,7 @@ with tab4:
             x=alt.X(f"{col}:N", sort=order_any, axis=alt.Axis(labelAngle=-45), title=str(col)),
             y=alt.Y("Amount:Q", axis=alt.Axis(format="$,.0f"), title="Amount ($)"),
             color=alt.Color("Type:N", title="", scale=alt.Scale(domain=["Allocated","Spent"],
-                                                                range=[pal["alloc"], pal["spent"]])),
+                                                                range=[pal["alloc"], pal["spent']])),
             xOffset="Type:N",
             tooltip=[alt.Tooltip(f"{col}:N"), alt.Tooltip("Type:N"),
                      alt.Tooltip("Amount:Q", title="Amount", format=",.0f")]
@@ -784,6 +762,53 @@ with tab4:
 # =============================
 # 🤖 AI-Powered Insights
 # =============================
+def tbl(df_):
+    return "(none)" if df_.empty else df_.to_string(index=False)
+
+def build_compact_summary(actuals_df: pd.DataFrame, cat_field: str):
+    a_month = actuals_df.groupby("Month", as_index=False)[["Actual_Effective","Budget_Allocated"]].sum()
+    a_month["Month"] = a_month["Month"].dt.strftime("%Y-%m")
+    a_dept = (actuals_df.groupby("Department", as_index=False)[["Actual_Effective","Budget_Allocated"]]
+              .sum().sort_values("Actual_Effective", ascending=False).head(10))
+    a_cat = (actuals_df.groupby(cat_field, as_index=False)[["Actual_Effective","Budget_Allocated"]]
+             .sum().sort_values("Actual_Effective", ascending=False).head(10))
+    prompt = f"""
+Use these compact summaries to answer succinctly.
+
+ACTUALS — monthly (Allocated vs Spent):
+{tbl(a_month.tail(24))}
+
+ACTUALS — top departments:
+{tbl(a_dept)}
+
+ACTUALS — top by {cat_field}:
+{tbl(a_cat)}
+"""
+    return prompt
+
+def parse_month_year(text: str):
+    month_map = {m.lower(): i for i, m in enumerate(
+        ["January","February","March","April","May","June","July","August","September","October","November","December"], 1)}
+    m1 = re.search(r'\b([A-Za-z]{3,9})\s+(\d{4})\b', text or "")
+    if m1:
+        mname = m1.group(1).lower()
+        yr = int(m1.group(2)); mon = None
+        for full, idx in month_map.items():
+            if full.startswith(mname): mon = idx; break
+        if mon: return yr, mon
+    m2 = re.search(r'\b(20\d{2})[-/](0?[1-9]|1[0-2])\b', text or "")
+    if m2: return int(m2.group(1)), int(m2.group(2))
+    m3 = re.search(r'\b(0?[1-9]|1[0-2])[-/](20\d{2})\b', text or "")
+    if m3: return int(m3.group(2)), int(m3.group(1))
+    return None, None
+
+def extract_match(text, options):
+    text_l = str(text).lower()
+    for opt in options:
+        if str(opt).lower() in text_l:
+            return opt
+    return None
+
 st.markdown("---")
 st.markdown(f"""
 <div class="ai-box">
@@ -800,7 +825,7 @@ with cols[0]:
         if not client:
             st.error("❌ OpenAI API key not configured")
         else:
-            compact = build_compact_summary(df_f, CAT_FIELD)
+            compact = build_compact_summary(df_f, "Department" if "Department" in df_f.columns else "Account_Type")
             user_prompt = compact + "\nSummarize key trends and give 2–3 actionable recommendations, scoped to the current filters."
             with st.spinner("🧠 AI analyzing your data..."):
                 ans = call_openai(
@@ -835,13 +860,15 @@ with cols[1]:
                     df_q = df_q[df_q[dim] == match]
 
         MAX_ROWS = 40
-        send_cols = ["Month","Department",CAT_FIELD,"Budget_Allocated","Actual_Effective","Variance_Effective","Variance_Percent_Effective"]
+        send_cols = ["Month","Department","Budget_Allocated","Actual_Effective","Variance_Effective","Variance_Percent_Effective"]
+        if "Program_Desc" in df_q.columns: send_cols.append("Program_Desc")
+        if "Account_Type" in df_q.columns: send_cols.append("Account_Type")
         slim = df_q[send_cols].copy() if not df_q.empty else pd.DataFrame(columns=send_cols)
         if not slim.empty:
             slim["Month"] = pd.to_datetime(slim["Month"]).dt.strftime("%Y-%m")
         context_table = slim.head(MAX_ROWS).to_string(index=False) if not slim.empty else "(no matching rows)"
 
-        compact = build_compact_summary(df_f, CAT_FIELD)
+        compact = build_compact_summary(df_f, "Department" if "Department" in df_f.columns else "Account_Type")
         final_prompt = f"""User question: {q}
 
 Primary context (top rows):
