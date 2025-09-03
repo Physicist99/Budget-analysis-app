@@ -495,7 +495,7 @@ if not df_f.empty:
                 .encode(
                     x=alt.X("Department:N", sort=order, axis=alt.Axis(labelAngle=-45)),
                     y=alt.Y("Amount:Q", axis=alt.Axis(format="$,.0f")),
-                    color=alt.Color("Type:N", title="", scale=alt.Scale(domain=["Allocated","Spent"], range=[pal["alloc"], pal["spent']])),
+                    color=alt.Color("Type:N", title="", scale=alt.Scale(domain=["Allocated","Spent"], range=[pal["alloc"], pal["spent"]])),
                     xOffset="Type:N",
                     tooltip=["Department","Type",alt.Tooltip("Amount:Q", format=",.0f")]
                 ).properties(height=420)
@@ -519,7 +519,7 @@ if not df_f.empty:
                 .encode(
                     x=alt.X("Account_Desc:N", sort=order, axis=alt.Axis(labelAngle=-45), title="Account Description"),
                     y=alt.Y("Amount:Q", axis=alt.Axis(format="$,.0f")),
-                    color=alt.Color("Type:N", title="", scale=alt.Scale(domain=["Allocated","Spent"], range=[pal["alloc"], pal["spent']])),
+                    color=alt.Color("Type:N", title="", scale=alt.Scale(domain=["Allocated","Spent"], range=[pal["alloc"], pal["spent"]])),
                     xOffset="Type:N",
                     tooltip=["Account_Desc","Type",alt.Tooltip("Amount:Q", format=",.0f")]
                 ).properties(height=420)
