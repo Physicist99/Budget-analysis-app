@@ -1,6 +1,10 @@
 streamlit
-pandas
-openai
 python-dotenv
+pandas
+numpy
 altair
-openpyxl
+openai
+langchain
+langchain-openai
+langchain-community
+faiss-cpu
